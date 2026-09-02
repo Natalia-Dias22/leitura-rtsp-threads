@@ -1,6 +1,6 @@
 CAMERAS = [
-    ("Video-1", "C:\\leitura-rtsp-threads\\meu_video.mp4"),
-    ("Video-2", "C:\\leitura-rtsp-threads\\meu_video2.mp4"),
-    ("Video-3", "C:\\leitura-rtsp-threads\\meu_video2.mp4"),
-    ("Video-4", "C:\\leitura-rtsp-threads\\meu_video.mp4"),
+    ("Video-1", "rtsp://admin:Mega@989@179.42.9.70:3554/Streaming/channels/101"),
+    ("Video-2", "rtsp://admin:Mega@989@179.42.9.70:3554/Streaming/channels/102"),
+    ("Video-3", "rtsp://admin:Mega@989@179.42.9.70:3554/Streaming/channels/101"),
+    ("Video-4", "rtsp://admin:Mega@989@179.42.9.70:3554/Streaming/channels/102"),
 ]
