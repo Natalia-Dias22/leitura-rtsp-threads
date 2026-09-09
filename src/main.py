@@ -1,8 +1,8 @@
 import cv2
 import time
-from camera_thread import CameraThread
+from cameras.camera_thread import CameraThread
 from config import CAMERAS
-from grid_utils import montar_grid
+from display.grid_utils import montar_grid
 
 
 cameras = [CameraThread(nome, url) for nome, url in CAMERAS]
@@ -30,15 +30,3 @@ tempo_total = time.time() - tempo_inicio_geral
 
 
 cv2.destroyAllWindows()
-
-# --- Métricas (parte nova) ---
-total_frames = sum(camera.contador_frames for camera in cameras)
-vazao = total_frames / tempo_total if tempo_total > 0 else 0
-
-print("\n--- Métricas de Desempenho (COM Threads) ---")
-print(f"Tempo total de execução: {tempo_total:.2f}s")
-print(f"Total de frames processados: {total_frames}")
-print(f"Vazão (throughput): {vazao:.2f} frames/segundo")
-
-for camera in cameras:
-    print(f"  - {camera.nome}: {camera.contador_frames} frames")

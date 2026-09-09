@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 
-def montar_grid(frames, colunas=2, largura=500, altura=400):
+def montar_grid(frames, colunas=2, largura=320, altura=240):
     """
     Recebe uma lista de frames (imagens) de diferentes câmeras e monta
     uma única imagem, organizando-os lado a lado em um grid.
