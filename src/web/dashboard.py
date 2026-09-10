@@ -73,6 +73,11 @@ st.markdown(
     .tech-item { border-bottom:1px solid #f0f1f3; padding:.35rem 0 .6rem; }
     .tech-key { display:block; color:var(--muted); font:500 .68rem 'Inter',sans-serif; text-transform:uppercase; letter-spacing:.04em; }
     .tech-value { display:block; color:var(--ink); font:600 .82rem 'JetBrains Mono',monospace; margin-top:.3rem; }
+    /* ---------- ABAS ---------- */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] { gap:1.5rem; border-bottom:1px solid var(--line); margin-top:.5rem; }
+    [data-testid="stTabs"] [data-baseweb="tab"] { font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:.92rem; color:var(--muted); padding:.55rem .1rem; }
+    [data-testid="stTabs"] [aria-selected="true"] { color:var(--teal) !important; }
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color:var(--teal) !important; }
     @media (max-width:850px) { .block-container { padding:1.25rem 1rem 2rem; } .topbar { display:block; } .updated { text-align:left; } .camera-row { grid-template-columns:1fr 1fr; gap:.45rem; } .camera-row .bar-wrap { grid-column:1 / -1; } .stability { text-align:left; } .tech-grid { grid-template-columns:1fr 1fr; } }
     </style>
     """,
@@ -112,6 +117,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================================================
+#  RESUMO FIXO (sempre visível, fora das abas)
+# ============================================================
 metric_cards = [
     ("Câmeras ativas", f"{resumo['cameras_ativas']}/{resumo['total_cameras']}", ""),
     ("Frames processados", f"{resumo['total_frames']:,}".replace(",", "."), ""),
@@ -124,61 +132,73 @@ for index, (label, value, unit) in enumerate(metric_cards):
         primary = " primary" if label == "Vazão" else ""
         st.markdown(f'<div class="metric-card{primary}"><div class="metric-label">{label}</div><div class="metric-value">{value}<span class="metric-unit">{unit}</span></div></div>', unsafe_allow_html=True)
 
-st.markdown('<div class="section-head"><h2>Monitoramento por câmera</h2><div class="section-note">Leitura individual dos streams</div></div>', unsafe_allow_html=True)
 
-video_columns = st.columns(min(len(cameras), 3) or 1)
-for index, camera in enumerate(cameras):
-    with video_columns[index % len(video_columns)]:
-        ativa = camera.is_alive()
-        status = "ATIVA" if ativa else "FINALIZADA"
-        status_class = "" if ativa else " finished"
-        st.markdown(f'<div class="video-card"><div class="video-card-header"><span class="video-title">{camera.nome}</span><span class="video-status{status_class}">● {status}</span></div>', unsafe_allow_html=True)
-        if camera.frame_atual is not None:
-            frame_rgb = cv2.cvtColor(camera.frame_atual, cv2.COLOR_BGR2RGB)
-            st.image(frame_rgb, width="stretch")
+# ============================================================
+#  ABAS — Câmeras | Métricas
+# ============================================================
+aba_cameras, aba_metricas = st.tabs(["Câmeras", "Métricas"])
+
+# ---------- ABA 1: CÂMERAS (vídeo ao vivo + tabela por câmera) ----------
+with aba_cameras:
+    st.markdown('<div class="section-head"><h2>Monitoramento por câmera</h2><div class="section-note">Leitura individual dos streams</div></div>', unsafe_allow_html=True)
+
+    video_columns = st.columns(min(len(cameras), 3) or 1)
+    for index, camera in enumerate(cameras):
+        with video_columns[index % len(video_columns)]:
+            ativa = camera.is_alive()
+            status = "ATIVA" if ativa else "FINALIZADA"
+            status_class = "" if ativa else " finished"
+            st.markdown(f'<div class="video-card"><div class="video-card-header"><span class="video-title">{camera.nome}</span><span class="video-status{status_class}">● {status}</span></div>', unsafe_allow_html=True)
+            if camera.frame_atual is not None:
+                frame_rgb = cv2.cvtColor(camera.frame_atual, cv2.COLOR_BGR2RGB)
+                st.image(frame_rgb, width="stretch")
+            else:
+                st.markdown('<div class="video-placeholder">Aguardando o primeiro frame...</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="video-meta"><span>{camera.fps:.2f} FPS</span><span>{camera.contador_frames} frames</span></div></div>', unsafe_allow_html=True)
+
+    max_fps = max((camera.fps for camera in cameras), default=1) or 1
+    camera_rows = []
+    for camera in cameras:
+        status = "Ativa" if camera.is_alive() else "Finalizada"
+        stability = "Stream estável" if camera.contador_frames > 0 else "Aguardando sinal"
+        percent = min(100, max(4, camera.fps / max_fps * 100))
+        camera_rows.append(f'<div class="camera-row"><div class="camera-name">{camera.nome}</div><div class="status"><span>●</span> {status}</div><div class="tech-number">{camera.fps:.2f} FPS</div><div class="bar-wrap"><div class="bar-track"><div class="bar-fill" style="width:{percent:.1f}%"></div></div></div><div class="stability">{stability}</div></div>')
+    st.markdown(f'<div class="panel">{"".join(camera_rows)}</div>', unsafe_allow_html=True)
+
+
+# ---------- ABA 2: MÉTRICAS (gráfico + comparação + telemetria) ----------
+with aba_metricas:
+    chart_column, compare_column = st.columns([1.65, 1])
+    with chart_column:
+        st.markdown('<div class="section-head"><h2>Vazão ao longo do tempo</h2><div class="live"><span></span>LIVE</div></div>', unsafe_allow_html=True)
+        if historico:
+            dados_grafico = pd.DataFrame(historico).rename(columns={"tempo": "Tempo (s)", "vazao": "Vazão (FPS)"})
+            chart = alt.Chart(dados_grafico).mark_line(color="#0f9f91", strokeWidth=2.5).encode(
+                x=alt.X("Tempo (s):Q", title="Tempo (s)", axis=alt.Axis(gridColor="#eef0f2", labelColor="#6b7280", titleColor="#6b7280")),
+                y=alt.Y("Vazão (FPS):Q", title="FPS", axis=alt.Axis(gridColor="#eef0f2", labelColor="#6b7280", titleColor="#6b7280")),
+                tooltip=[alt.Tooltip("Tempo (s):Q", format=".1f"), alt.Tooltip("Vazão (FPS):Q", format=".2f")],
+            ).properties(height=285, background="#ffffff").configure_view(stroke="#e5e7eb").configure_axis(labelFont="JetBrains Mono", titleFont="Inter", domainColor="#d1d5db")
+            st.altair_chart(chart, width="stretch")
         else:
-            st.markdown('<div class="video-placeholder">Aguardando o primeiro frame...</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="video-meta"><span>{camera.fps:.2f} FPS</span><span>{camera.contador_frames} frames</span></div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="panel">Aguardando dados de vazão...</div>', unsafe_allow_html=True)
 
-max_fps = max((camera.fps for camera in cameras), default=1) or 1
-camera_rows = []
-for camera in cameras:
-    status = "Ativa" if camera.is_alive() else "Finalizada"
-    stability = "Stream estável" if camera.contador_frames > 0 else "Aguardando sinal"
-    percent = min(100, max(4, camera.fps / max_fps * 100))
-    camera_rows.append(f'<div class="camera-row"><div class="camera-name">{camera.nome}</div><div class="status"><span>●</span> {status}</div><div class="tech-number">{camera.fps:.2f} FPS</div><div class="bar-wrap"><div class="bar-track"><div class="bar-fill" style="width:{percent:.1f}%"></div></div></div><div class="stability">{stability}</div></div>')
-st.markdown(f'<div class="panel">{"".join(camera_rows)}</div>', unsafe_allow_html=True)
+    with compare_column:
+        st.markdown('<div class="section-head"><h2>Threads vs Sequencial</h2></div>', unsafe_allow_html=True)
+        if referencia:
+            sequencial = referencia["vazao_total"]
+            maior = max(fps_atual, sequencial, 1)
+            threads_width = fps_atual / maior * 100
+            sequencial_width = sequencial / maior * 100
+            badge = f'<div class="badge">↑ {speedup:.2f}× mais rápido</div>' if speedup else ""
+            st.markdown(f'<div class="panel"><div class="comparison"><div class="compare-row"><div class="compare-label">Multithreading</div><div class="compare-fill" style="width:{threads_width:.1f}%"></div><div class="compare-value">{fps_atual:.2f} FPS</div></div><div class="compare-row"><div class="compare-label">Sequencial</div><div class="compare-fill reference" style="width:{sequencial_width:.1f}%"></div><div class="compare-value">{sequencial:.2f} FPS</div></div>{badge}</div></div>', unsafe_allow_html=True)
+        else:
+            st.info("Execute scripts/comparacao_sequencial.py para gerar a referência.")
 
-chart_column, compare_column = st.columns([1.65, 1])
-with chart_column:
-    st.markdown('<div class="section-head"><h2>Vazão ao longo do tempo</h2><div class="live"><span></span>LIVE</div></div>', unsafe_allow_html=True)
-    if historico:
-        dados_grafico = pd.DataFrame(historico).rename(columns={"tempo":"Tempo (s)", "vazao":"Vazão (FPS)"})
-        chart = alt.Chart(dados_grafico).mark_line(color="#0f9f91", strokeWidth=2.5).encode(
-            x=alt.X("Tempo (s):Q", title="Tempo (s)", axis=alt.Axis(gridColor="#eef0f2", labelColor="#6b7280", titleColor="#6b7280")),
-            y=alt.Y("Vazão (FPS):Q", title="FPS", axis=alt.Axis(gridColor="#eef0f2", labelColor="#6b7280", titleColor="#6b7280")),
-            tooltip=[alt.Tooltip("Tempo (s):Q", format=".1f"), alt.Tooltip("Vazão (FPS):Q", format=".2f")],
-        ).properties(height=285, background="#ffffff").configure_view(stroke="#e5e7eb").configure_axis(labelFont="JetBrains Mono", titleFont="Inter", domainColor="#d1d5db")
-        st.altair_chart(chart, width="stretch")
-    else:
-        st.markdown('<div class="panel">Aguardando dados de vazão...</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-head"><h2>Telemetria do sistema</h2><div class="section-note">Estado operacional atual</div></div>', unsafe_allow_html=True)
+    tech_data = [("Threads", str(len(cameras))), ("Câmeras conectadas", f"{resumo['cameras_ativas']}/{resumo['total_cameras']}"), ("Protocolo", "RTSP"), ("FPS médio", f"{fps_medio:.2f}"), ("FPS máximo", f"{fps_maximo:.2f}"), ("Estado da conexão", "Online" if resumo["total_frames"] else "Aguardando")]
+    tech_items = "".join(f'<div class="tech-item"><span class="tech-key">{key}</span><span class="tech-value">{value}</span></div>' for key, value in tech_data)
+    st.markdown(f'<div class="panel"><div class="tech-grid">{tech_items}</div></div>', unsafe_allow_html=True)
 
-with compare_column:
-    st.markdown('<div class="section-head"><h2>Threads vs Sequencial</h2></div>', unsafe_allow_html=True)
-    if referencia:
-        sequencial = referencia["vazao_total"]
-        maior = max(fps_atual, sequencial, 1)
-        threads_width = fps_atual / maior * 100
-        sequencial_width = sequencial / maior * 100
-        badge = f'<div class="badge">↑ {speedup:.2f}× mais rápido</div>' if speedup else ""
-        st.markdown(f'<div class="panel"><div class="comparison"><div class="compare-row"><div class="compare-label">Multithreading</div><div class="compare-fill" style="width:{threads_width:.1f}%"></div><div class="compare-value">{fps_atual:.2f} FPS</div></div><div class="compare-row"><div class="compare-label">Sequencial</div><div class="compare-fill reference" style="width:{sequencial_width:.1f}%"></div><div class="compare-value">{sequencial:.2f} FPS</div></div>{badge}</div></div>', unsafe_allow_html=True)
-    else:
-        st.info("Execute scripts/comparacao_sequencial.py para gerar a referência.")
-
-st.markdown('<div class="section-head"><h2>Telemetria do sistema</h2><div class="section-note">Estado operacional atual</div></div>', unsafe_allow_html=True)
-tech_data = [("Threads", str(len(cameras))), ("Câmeras conectadas", f"{resumo['cameras_ativas']}/{resumo['total_cameras']}"), ("Protocolo", "RTSP"), ("FPS médio", f"{fps_medio:.2f}"), ("FPS máximo", f"{fps_maximo:.2f}"), ("Estado da conexão", "Online" if resumo["total_frames"] else "Aguardando")]
-tech_items = "".join(f'<div class="tech-item"><span class="tech-key">{key}</span><span class="tech-value">{value}</span></div>' for key, value in tech_data)
-st.markdown(f'<div class="panel"><div class="tech-grid">{tech_items}</div></div>', unsafe_allow_html=True)
 
 if metrics_store.todas_finalizadas():
     if not st.session_state.get("dashboard_atualizado_apos_finalizar", False):
