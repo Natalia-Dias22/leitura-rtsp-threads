@@ -1,5 +1,29 @@
 {
-  "vazao_total": 20.20519118016601,
-  "total_frames": 1373,
-  "tempo_total": 67.95283389091492
+  "tempo_total": 26.47,
+  "total_frames": 2056,
+  "vazao_total": 77.67,
+  "duracao_teste_por_camera": 30,
+  "quantidade_cameras": 4,
+  "por_camera": [
+    {
+      "nome": "Video-1",
+      "frames": 658,
+      "tempo": 9.14
+    },
+    {
+      "nome": "Video-2",
+      "frames": 591,
+      "tempo": 7.18
+    },
+    {
+      "nome": "Video-3",
+      "frames": 300,
+      "tempo": 4.41
+    },
+    {
+      "nome": "Video-4",
+      "frames": 507,
+      "tempo": 5.16
+    }
+  ]
 }
