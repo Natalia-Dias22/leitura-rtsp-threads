@@ -85,15 +85,7 @@ st.markdown(
 )
 
 
-if "cameras" not in st.session_state:
-    cameras = [CameraThread(nome, url) for nome, url in CAMERAS]
-    for camera in cameras:
-        camera.start()
-    st.session_state.cameras = cameras
-    st.session_state.metrics_store = MetricsStore(cameras)
-
-cameras = st.session_state.cameras
-metrics_store = st.session_state.metrics_store
+TOTAL_CAMERAS_DISPONIVEIS = len(CAMERAS)
 
 caminho_referencia = os.path.join(os.path.dirname(__file__), "..", "..", "resultado_sequencial.json")
 referencia = None
@@ -103,6 +95,66 @@ if os.path.exists(caminho_referencia):
         if isinstance(dados, dict) and dados.get("vazao_total") is not None:
             referencia = dados
 
+
+def vazao_sequencial_equivalente(n):
+    """Calcula a vazão sequencial 'equivalente' para N câmeras, somando os
+    dados individuais das N primeiras câmeras do JSON de referência — sem
+    precisar rodar comparacao_sequencial.py de novo. Isso funciona porque,
+    no modo sequencial, cada câmera roda sozinha: o tempo dela não depende
+    de quantas outras existem na lista."""
+    if not referencia:
+        return 0
+    por_camera = referencia.get("por_camera")
+    if not por_camera:
+        # JSON antigo, sem detalhamento por câmera: cai no total geral.
+        return referencia.get("vazao_total", 0)
+    subset = por_camera[:n]
+    frames = sum(item["frames"] for item in subset)
+    tempo = sum(item["tempo"] for item in subset)
+    return frames / tempo if tempo > 0 else 0
+
+
+if "historico_por_n" not in st.session_state:
+    st.session_state.historico_por_n = {}  # {n_threads: vazao_final_medida}
+
+if "n_cameras_ativas" not in st.session_state:
+    st.session_state.n_cameras_ativas = TOTAL_CAMERAS_DISPONIVEIS
+
+
+# ============================================================
+#  CONTROLE DE ESCALABILIDADE — quantas threads ativar
+# ============================================================
+st.markdown('<div class="section-head"><h2>Escalabilidade: número de threads ativas</h2><div class="section-note">Ajuste e veja o efeito na vazão</div></div>', unsafe_allow_html=True)
+n_selecionado = st.slider(
+    "Câmeras/threads ativas",
+    min_value=1,
+    max_value=TOTAL_CAMERAS_DISPONIVEIS,
+    value=st.session_state.n_cameras_ativas,
+    label_visibility="collapsed",
+)
+
+precisa_reiniciar = "cameras" not in st.session_state or n_selecionado != st.session_state.n_cameras_ativas
+if precisa_reiniciar:
+    # Encerra as threads antigas de forma limpa antes de criar as novas
+    if "cameras" in st.session_state:
+        for camera_antiga in st.session_state.cameras:
+            camera_antiga.rodando = False
+        for camera_antiga in st.session_state.cameras:
+            camera_antiga.join(timeout=2)
+
+    cameras_selecionadas = CAMERAS[:n_selecionado]
+    cameras = [CameraThread(nome, url) for nome, url in cameras_selecionadas]
+    for camera in cameras:
+        camera.start()
+
+    st.session_state.cameras = cameras
+    st.session_state.metrics_store = MetricsStore(cameras)
+    st.session_state.n_cameras_ativas = n_selecionado
+    st.session_state.dashboard_atualizado_apos_finalizar = False
+
+cameras = st.session_state.cameras
+metrics_store = st.session_state.metrics_store
+
 resumo = metrics_store.resumo()
 metrics_store.registrar_amostra()
 historico = metrics_store.historico()
@@ -110,7 +162,13 @@ agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 fps_atual = resumo["vazao_total"]
 fps_medio = sum(amostra["vazao"] for amostra in historico) / len(historico) if historico else 0
 fps_maximo = max((amostra["vazao"] for amostra in historico), default=0)
-speedup = fps_atual / referencia["vazao_total"] if referencia and referencia["vazao_total"] else 0
+vazao_seq_atual = vazao_sequencial_equivalente(n_selecionado)
+speedup = fps_atual / vazao_seq_atual if vazao_seq_atual else 0
+
+# Quando essa rodada de N threads terminar, guarda o resultado final
+# no histórico, pra alimentar o gráfico de escalabilidade.
+if metrics_store.todas_finalizadas() and fps_atual > 0:
+    st.session_state.historico_por_n[n_selecionado] = round(fps_atual, 2)
 
 st.markdown(
     f'<div class="topbar"><div><h1>Monitoramento Multithreaded de Câmeras</h1><div class="subtitle">Leitura de canais RTSP em paralelo com Python + Threading</div></div><div><div class="system-state"><span>●</span> Sistema online</div><div class="updated">Atualizado em {agora}</div></div></div>',
@@ -136,7 +194,7 @@ for index, (label, value, unit) in enumerate(metric_cards):
 # ============================================================
 #  ABAS — Câmeras | Métricas
 # ============================================================
-aba_cameras, aba_metricas = st.tabs(["Câmeras", "Métricas"])
+aba_cameras, aba_metricas = st.tabs(["📷 Câmeras", "📊 Métricas"])
 
 # ---------- ABA 1: CÂMERAS (vídeo ao vivo + tabela por câmera) ----------
 with aba_cameras:
@@ -170,27 +228,39 @@ with aba_cameras:
 with aba_metricas:
     chart_column, compare_column = st.columns([1.65, 1])
     with chart_column:
-        st.markdown('<div class="section-head"><h2>Vazão ao longo do tempo</h2><div class="live"><span></span>LIVE</div></div>', unsafe_allow_html=True)
-        if historico:
-            dados_grafico = pd.DataFrame(historico).rename(columns={"tempo": "Tempo (s)", "vazao": "Vazão (FPS)"})
-            chart = alt.Chart(dados_grafico).mark_line(color="#0f9f91", strokeWidth=2.5).encode(
-                x=alt.X("Tempo (s):Q", title="Tempo (s)", axis=alt.Axis(gridColor="#eef0f2", labelColor="#6b7280", titleColor="#6b7280")),
-                y=alt.Y("Vazão (FPS):Q", title="FPS", axis=alt.Axis(gridColor="#eef0f2", labelColor="#6b7280", titleColor="#6b7280")),
-                tooltip=[alt.Tooltip("Tempo (s):Q", format=".1f"), alt.Tooltip("Vazão (FPS):Q", format=".2f")],
+        st.markdown('<div class="section-head"><h2>Vazão por número de threads ativas</h2><div class="live"><span></span>LIVE</div></div>', unsafe_allow_html=True)
+
+        # Monta as barras: uma por N já testado nesta sessão (ordenado),
+        # comparando vazão medida com Threads x equivalente Sequencial.
+        n_testados = sorted(st.session_state.historico_por_n.keys())
+        if n_testados:
+            linhas = []
+            for n in n_testados:
+                linhas.append({"N": f"{n}", "Tipo": "Threads (medido)", "Vazão (FPS)": st.session_state.historico_por_n[n]})
+                linhas.append({"N": f"{n}", "Tipo": "Sequencial (projetado)", "Vazão (FPS)": round(vazao_sequencial_equivalente(n), 2)})
+            dados_escalabilidade = pd.DataFrame(linhas)
+
+            chart = alt.Chart(dados_escalabilidade).mark_bar().encode(
+                x=alt.X("N:N", title="Nº de threads/câmeras ativas"),
+                y=alt.Y("Vazão (FPS):Q", title="FPS"),
+                color=alt.Color("Tipo:N", scale=alt.Scale(range=["#0f9f91", "#d7a64a"]), legend=alt.Legend(title=None, orient="top")),
+                xOffset="Tipo:N",
+                tooltip=["N", "Tipo", alt.Tooltip("Vazão (FPS):Q", format=".2f")],
             ).properties(height=285, background="#ffffff").configure_view(stroke="#e5e7eb").configure_axis(labelFont="JetBrains Mono", titleFont="Inter", domainColor="#d1d5db")
             st.altair_chart(chart, width="stretch")
+            st.caption("Mova o controle de threads acima e espere finalizar para adicionar mais pontos a este gráfico.")
         else:
-            st.markdown('<div class="panel">Aguardando dados de vazão...</div>', unsafe_allow_html=True)
+            st.markdown('<div class="panel">Aguardando a rodada atual finalizar, para registrar o primeiro ponto do gráfico...</div>', unsafe_allow_html=True)
 
     with compare_column:
-        st.markdown('<div class="section-head"><h2>Threads vs Sequencial</h2></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-head"><h2>Threads vs Sequencial (N={n_selecionado})</h2></div>', unsafe_allow_html=True)
         if referencia:
-            sequencial = referencia["vazao_total"]
-            maior = max(fps_atual, sequencial, 1)
+            maior = max(fps_atual, vazao_seq_atual, 1)
             threads_width = fps_atual / maior * 100
-            sequencial_width = sequencial / maior * 100
+            sequencial_width = vazao_seq_atual / maior * 100
             badge = f'<div class="badge">↑ {speedup:.2f}× mais rápido</div>' if speedup else ""
-            st.markdown(f'<div class="panel"><div class="comparison"><div class="compare-row"><div class="compare-label">Multithreading</div><div class="compare-fill" style="width:{threads_width:.1f}%"></div><div class="compare-value">{fps_atual:.2f} FPS</div></div><div class="compare-row"><div class="compare-label">Sequencial</div><div class="compare-fill reference" style="width:{sequencial_width:.1f}%"></div><div class="compare-value">{sequencial:.2f} FPS</div></div>{badge}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="panel"><div class="comparison"><div class="compare-row"><div class="compare-label">Multithreading</div><div class="compare-fill" style="width:{threads_width:.1f}%"></div><div class="compare-value">{fps_atual:.2f} FPS</div></div><div class="compare-row"><div class="compare-label">Sequencial</div><div class="compare-fill reference" style="width:{sequencial_width:.1f}%"></div><div class="compare-value">{vazao_seq_atual:.2f} FPS</div></div>{badge}</div></div>', unsafe_allow_html=True)
+            st.caption("Sequencial calculado somando os dados individuais das câmeras no JSON — não precisa re-rodar o script.")
         else:
             st.info("Execute scripts/comparacao_sequencial.py para gerar a referência.")
 
